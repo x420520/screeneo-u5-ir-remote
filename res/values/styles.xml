@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="icon_background">#132F34</color>
+    <style name="RemoteTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#101721</item>
+        <item name="android:statusBarColor">#101721</item>
+        <item name="android:navigationBarColor">#101721</item>
+        <item name="android:colorAccent">#A9F1D7</item>
+        <item name="android:colorBackground">#1C2736</item>
+    </style>
+</resources>

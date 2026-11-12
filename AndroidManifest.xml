@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.screeneo.u5irremote"
-    android:versionCode="12"
-    android:versionName="1.5">
+    android:versionCode="13"
+    android:versionName="1.6">
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="30" />
     <uses-permission android:name="android.permission.TRANSMIT_IR" />
     <uses-feature android:name="android.hardware.consumerir" android:required="false" />
     <application android:allowBackup="false" android:label="U5 红外遥控"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/RemoteTheme">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

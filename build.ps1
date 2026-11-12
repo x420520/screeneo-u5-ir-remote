@@ -3,7 +3,11 @@ param(
     [string]$SdkRoot = $(if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { $env:ANDROID_SDK_ROOT }),
     [string]$BuildToolsDir,
     [string]$PlatformJar,
-    [string]$JavaBin = $(if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin' })
+    [string]$JavaBin = $(if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin' }),
+    [string]$SigningKeystore,
+    [string]$SigningAlias,
+    [string]$SigningPasswordFile,
+    [string]$OutputApk
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,38 +41,56 @@ $signer = Join-Path $BuildToolsDir 'lib/apksigner.jar'
 
 $outputDir = Join-Path $PSScriptRoot 'build'
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-$debugKey = Join-Path $outputDir 'debug.keystore'
-$apk = Join-Path $outputDir 'U5-IR-Remote-debug.apk'
-if (!(Test-Path -LiteralPath $debugKey)) {
-    Invoke-BuildTool $keytool @('-genkeypair', '-keystore', $debugKey, '-storetype', 'PKCS12',
-        '-storepass', 'android', '-keypass', 'android', '-alias', 'androiddebugkey',
-        '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650', '-dname', 'CN=Android Debug')
+if ($SigningKeystore -or $SigningAlias -or $SigningPasswordFile) {
+    if (!$SigningKeystore -or !$SigningAlias -or !$SigningPasswordFile) {
+        throw 'Pass -SigningKeystore, -SigningAlias, and -SigningPasswordFile together.'
+    }
+    $keystore = (Resolve-Path -LiteralPath $SigningKeystore).Path
+    $keystorePass = 'file:' + (Resolve-Path -LiteralPath $SigningPasswordFile).Path
+    $alias = $SigningAlias
+    $defaultApk = Join-Path $outputDir 'U5-IR-Remote.apk'
+} else {
+    $keystore = Join-Path $outputDir 'debug.keystore'
+    $keystorePass = 'pass:android'
+    $alias = 'androiddebugkey'
+    $defaultApk = Join-Path $outputDir 'U5-IR-Remote-debug.apk'
+    if (!(Test-Path -LiteralPath $keystore)) {
+        Invoke-BuildTool $keytool @('-genkeypair', '-keystore', $keystore, '-storetype', 'PKCS12',
+            '-storepass', 'android', '-keypass', 'android', '-alias', $alias,
+            '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650', '-dname', 'CN=Android Debug')
+    }
 }
+$apk = if ($OutputApk) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputApk) } else { $defaultApk }
 
 $tempRoot = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).Path
 $work = Join-Path $tempRoot ('u5-ir-build-' + [Guid]::NewGuid().ToString('N'))
 $classes = Join-Path $work 'classes'
 $dex = Join-Path $work 'dex'
-New-Item -ItemType Directory -Path $classes,$dex -Force | Out-Null
+$generated = Join-Path $work 'generated'
+New-Item -ItemType Directory -Path $classes,$dex,$generated -Force | Out-Null
 try {
     $manifest = Join-Path $work 'AndroidManifest.xml'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'AndroidManifest.xml') -Destination $manifest
+    $resources = Join-Path $work 'res'
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'res') -Destination $resources -Recurse
     $classJar = Join-Path $work 'classes.jar'
     $unsigned = Join-Path $work 'unsigned.apk'
     $aligned = Join-Path $work 'aligned.apk'
-    Invoke-BuildTool $javac @('-encoding', 'UTF-8', '-source', '8', '-target', '8',
-        '-classpath', $PlatformJar, '-d', $classes, (Join-Path $PSScriptRoot 'MainActivity.java'),
-        (Join-Path $PSScriptRoot 'IrSignal.java'))
+    Invoke-BuildTool $aapt @('package', '-f', '-m', '-J', $generated,
+        '-M', $manifest, '-S', $resources, '-I', $PlatformJar, '-F', $unsigned)
+    $sources = @((Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.java' -File).FullName)
+    $sources += @((Get-ChildItem -LiteralPath $generated -Filter '*.java' -File -Recurse).FullName)
+    Invoke-BuildTool $javac (@('-encoding', 'UTF-8', '-source', '8', '-target', '8',
+        '-classpath', $PlatformJar, '-d', $classes) + $sources)
     Invoke-BuildTool $jar @('cf', $classJar, '-C', $classes, '.')
     Invoke-BuildTool $java @('-cp', $d8, 'com.android.tools.r8.D8', '--min-api', '23',
         '--lib', $PlatformJar, '--output', $dex, $classJar)
-    Invoke-BuildTool $aapt @('package', '-f', '-M', $manifest, '-I', $PlatformJar, '-F', $unsigned)
     Push-Location -LiteralPath $dex
     try { Invoke-BuildTool $aapt @('add', $unsigned, 'classes.dex') }
     finally { Pop-Location }
     Invoke-BuildTool $zipalign @('-f', '4', $unsigned, $aligned)
     Invoke-BuildTool $java @('-jar', $signer, 'sign', '--v4-signing-enabled', 'false',
-        '--ks', $debugKey, '--ks-key-alias', 'androiddebugkey', '--ks-pass', 'pass:android',
+        '--ks', $keystore, '--ks-key-alias', $alias, '--ks-pass', $keystorePass,
         '--out', $apk, $aligned)
     Invoke-BuildTool $java @('-jar', $signer, 'verify', '--verbose', $apk)
     Write-Output $apk
